@@ -1,0 +1,47 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ── Environment / secrets ──
+.env
+.env.*
+!.env.example
+*.key
+
+# ── Node ──
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Vite / build output ──
+frontend/dist/
+frontend/.vite/
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDEs ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Docker ──
+.dockerignore
