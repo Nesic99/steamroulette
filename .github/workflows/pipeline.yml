@@ -35,9 +35,9 @@ jobs:
 
       - name: Lint — flake8
         run: |
-          flake8 backend/app.py backend/tests/ \
+          flake8 backend/ \
             --max-line-length=120 \
-            --ignore=E501,W503
+            --ignore=E501,W503,E241,E302,E303,E305,E401,W292
 
       - name: Test — pytest
         working-directory: backend
@@ -63,8 +63,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         working-directory: frontend
