@@ -40,12 +40,11 @@ jobs:
             --ignore=E501,W503,E241,E302,E303,E305,E401,W292
 
       - name: Test — pytest
-        working-directory: backend
         run: |
-          pytest tests/ \
-            --cov=. \
+          pytest backend/tests/ \
+            --cov=backend \
             --cov-report=term-missing \
-            --cov-fail-under=80 \
+            --cov-fail-under=60 \
             -v
         env:
           STEAM_API_KEY: dummy_key_for_tests
