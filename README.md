@@ -1,6 +1,4 @@
-<img src="assets/logo.svg" alt="Steam Roulette" width="80" height="86" />
-
-# Steam Roulette
+# <img src="assets/logo.svg" alt="" width="36" height="39" valign="middle" /> Steam Roulette
 
 **Stop browsing. Start playing.**
 
