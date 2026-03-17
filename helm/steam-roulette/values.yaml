@@ -2,14 +2,13 @@
 image:
   registry: ghcr.io
   # Set to your GitHub username/org, e.g. ghcr.io/yourname
-  repository: nesic99/steam-roulette
+  repository: yourname/steam-roulette
   pullPolicy: IfNotPresent
 
 # Backend
 backend:
-  image: ghcr.io/nesic99/steam-roulette-backend
+  image:
     tag: latest
-    # Override full image if needed: ghcr.io/yourname/steam-roulette-backend:sha-abc123
   replicaCount: 1
   port: 5000
   resources:
@@ -19,13 +18,14 @@ backend:
     limits:
       cpu: 500m
       memory: 256Mi
-  # Name of the k8s Secret that holds STEAM_API_KEY
-  # Create with: kubectl create secret generic steam-roulette-secret --from-literal=STEAM_API_KEY=xxxx
   secretName: steam-roulette-secret
+  service:
+    type: NodePort
+    nodePort: 30503   # exposed on every k3s node at this port
 
 # Frontend
 frontend:
-  image: ghcr.io/nesic99/steam-roulette-frontend
+  image:
     tag: latest
   replicaCount: 1
   port: 80
@@ -36,9 +36,11 @@ frontend:
     limits:
       cpu: 200m
       memory: 128Mi
+  service:
+    type: NodePort
+    nodePort: 30082   # exposed on every k3s node at this port
 
-# Ingress
-# Ingress — disabled, traffic routed via external nginx proxy instead
+# Ingress - disabled, traffic routed via external nginx proxy instead
 ingress:
   enabled: false
 
