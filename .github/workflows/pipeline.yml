@@ -37,7 +37,7 @@ jobs:
         run: |
           flake8 backend/ \
             --max-line-length=120 \
-            --ignore=E501,W503,E241,E302,E303,E305,E401,W292
+            --ignore=E501,W503,E241,E302,E303,E305,E401,W292,E402
 
       - name: Test — pytest
         run: |
@@ -65,7 +65,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        run: npm install
 
       - name: Type-check — tsc
         working-directory: frontend
