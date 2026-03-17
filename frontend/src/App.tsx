@@ -9,9 +9,8 @@ interface Game {
   store_url: string;
   genres: string[];
   categories: string[];
-  is_singleplayer: boolean;
-  is_multiplayer: boolean;
-  is_co_op: boolean;
+  achievements_unlocked: number | null;
+  achievements_total: number | null;
 }
 
 interface Player {
@@ -24,27 +23,44 @@ interface ApiResponse {
   game: Game;
   player: Player;
   total_games: number;
+  filtered_pool: number;
 }
 
 interface Filters {
-  mode: "any" | "singleplayer" | "multiplayer" | "co_op";
-  genre: string;
+  modes: string[];
+  genres: string[];
+  unplayed_only: boolean;
+  playtime_min: number;
+  playtime_max: number;
 }
 
-// In Docker, nginx proxies /api → backend. In dev, Vite proxy does the same.
 const API_BASE = "";
 
-const GENRES = [
-  "any", "action", "adventure", "rpg", "strategy", "simulation",
-  "sports", "racing", "puzzle", "horror", "indie", "casual",
+const MODE_OPTIONS = [
+  { key: "singleplayer",      label: "Single-player", icon: "👤" },
+  { key: "multiplayer",       label: "Multiplayer",    icon: "👥" },
+  { key: "co_op",             label: "Co-op",          icon: "🤝" },
+  { key: "online_co_op",      label: "Online Co-op",   icon: "🌐" },
+  { key: "local_multiplayer", label: "Local Multi",    icon: "🛋️" },
+  { key: "local_co_op",       label: "Local Co-op",    icon: "🎮" },
+  { key: "pvp",               label: "PvP",            icon: "⚔️" },
+  { key: "mmo",               label: "MMO",            icon: "🗺️" },
 ];
 
-const MODE_LABELS: Record<string, string> = {
-  any: "Any",
-  singleplayer: "Single-player",
-  multiplayer: "Multiplayer",
-  co_op: "Co-op",
-};
+const GENRE_OPTIONS = [
+  "Action", "Adventure", "Casual", "Early Access", "Free to Play",
+  "Indie", "Massively Multiplayer", "RPG", "Racing", "Simulation",
+  "Sports", "Strategy",
+];
+
+const PLAYTIME_PRESETS = [
+  { label: "Any",     min: 0,  max: -1, unplayed: false },
+  { label: "Unplayed",min: 0,  max: 0,  unplayed: true  },
+  { label: "< 1h",   min: 0,  max: 1,  unplayed: false },
+  { label: "1–10h",  min: 1,  max: 10, unplayed: false },
+  { label: "10–50h", min: 10, max: 50, unplayed: false },
+  { label: "50h+",   min: 50, max: -1, unplayed: false },
+];
 
 function formatPlaytime(minutes: number): string {
   if (minutes === 0) return "Never played";
@@ -52,64 +68,95 @@ function formatPlaytime(minutes: number): string {
   return `${Math.floor(minutes / 60).toLocaleString()}h played`;
 }
 
-function capitalize(s: string) {
-  return s.charAt(0).toUpperCase() + s.slice(1);
+function Toggle({
+  active, onClick, children,
+}: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button className={`toggle ${active ? "active" : ""}`} onClick={onClick}>
+      {children}
+    </button>
+  );
 }
 
 export default function App() {
   const [url, setUrl] = useState("");
-  const [filters, setFilters] = useState<Filters>({ mode: "any", genre: "any" });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rolling, setRolling] = useState(false);
+  const [filters, setFilters] = useState<Filters>({
+    modes: [], genres: [], unplayed_only: false, playtime_min: 0, playtime_max: -1,
+  });
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const fetchGame = async (profileUrl: string, activeFilters: Filters) => {
+  const activeFilterCount =
+    filters.modes.length +
+    filters.genres.length +
+    (filters.unplayed_only ? 1 : 0) +
+    (filters.playtime_min > 0 || filters.playtime_max >= 0 ? 1 : 0);
+
+  function toggleMode(key: string) {
+    setFilters(f => ({
+      ...f,
+      modes: f.modes.includes(key) ? f.modes.filter(m => m !== key) : [...f.modes, key],
+    }));
+  }
+
+  function toggleGenre(g: string) {
+    setFilters(f => ({
+      ...f,
+      genres: f.genres.includes(g) ? f.genres.filter(x => x !== g) : [...f.genres, g],
+    }));
+  }
+
+  function applyPlaytimePreset(p: typeof PLAYTIME_PRESETS[0]) {
+    setFilters(f => ({
+      ...f,
+      unplayed_only: p.unplayed,
+      playtime_min: p.min,
+      playtime_max: p.unplayed ? -1 : p.max,
+    }));
+  }
+
+  const currentPreset = PLAYTIME_PRESETS.find(p => {
+    if (p.unplayed) return filters.unplayed_only;
+    return !filters.unplayed_only && p.min === filters.playtime_min && p.max === filters.playtime_max;
+  });
+
+  const fetchGame = async (profileUrl: string) => {
     setLoading(true);
     setError(null);
     setRolling(true);
-    setResult(null);
 
     try {
       const res = await fetch(`${API_BASE}/api/random-game`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profile_url: profileUrl, filters: activeFilters }),
+        body: JSON.stringify({ profile_url: profileUrl, filters }),
       });
-
       const data = await res.json();
-
-      if (!res.ok || "error" in data) {
-        setError(data.error ?? "Something went wrong.");
-        setRolling(false);
+      if (!res.ok || data.error) {
+        setError(data.error || "Something went wrong.");
         setLoading(false);
-        return;
+        setRolling(false);
+      } else {
+        setTimeout(() => {
+          setResult(data);
+          setRolling(false);
+          setLoading(false);
+        }, 800);
       }
-
-      setTimeout(() => {
-        setResult(data as ApiResponse);
-        setRolling(false);
-        setLoading(false);
-      }, 700);
     } catch {
       setError("Could not connect to the server. Is the backend running?");
-      setRolling(false);
       setLoading(false);
+      setRolling(false);
     }
   };
 
   const handleSubmit = () => {
     if (!url.trim()) { inputRef.current?.focus(); return; }
-    fetchGame(url.trim(), filters);
+    fetchGame(url.trim());
   };
-
-  const handleReroll = () => {
-    if (url.trim()) fetchGame(url.trim(), filters);
-  };
-
-  const setMode = (mode: Filters["mode"]) => setFilters(f => ({ ...f, mode }));
-  const setGenre = (genre: string) => setFilters(f => ({ ...f, genre }));
 
   return (
     <div className="app">
@@ -149,37 +196,61 @@ export default function App() {
           <p className="hint">Paste your Steam profile URL or vanity name</p>
         </div>
 
-        {/* Filters */}
-        <div className="filters-section">
+        {/* Filters — always visible */}
+        <div className="filters-container">
           <div className="filter-group">
-            <label className="filter-label">MODE</label>
-            <div className="pill-row">
-              {(["any", "singleplayer", "multiplayer", "co_op"] as const).map(m => (
-                <button
-                  key={m}
-                  className={`pill ${filters.mode === m ? "active" : ""}`}
-                  onClick={() => setMode(m)}
-                >
-                  {MODE_LABELS[m]}
-                </button>
+            <div className="filter-group-header">
+              <span className="filter-label">Play Mode</span>
+              <span className="filter-hint">any that apply</span>
+            </div>
+            <div className="toggle-grid">
+              {MODE_OPTIONS.map(m => (
+                <Toggle key={m.key} active={filters.modes.includes(m.key)} onClick={() => toggleMode(m.key)}>
+                  {m.icon} {m.label}
+                </Toggle>
               ))}
             </div>
           </div>
 
           <div className="filter-group">
-            <label className="filter-label">GENRE</label>
-            <div className="pill-row">
-              {GENRES.map(g => (
-                <button
-                  key={g}
-                  className={`pill ${filters.genre === g ? "active" : ""}`}
-                  onClick={() => setGenre(g)}
-                >
-                  {g === "any" ? "Any" : capitalize(g)}
-                </button>
+            <div className="filter-group-header">
+              <span className="filter-label">Genre</span>
+              <span className="filter-hint">all must match</span>
+            </div>
+            <div className="toggle-grid">
+              {GENRE_OPTIONS.map(g => (
+                <Toggle key={g} active={filters.genres.includes(g)} onClick={() => toggleGenre(g)}>
+                  {g}
+                </Toggle>
               ))}
             </div>
           </div>
+
+          <div className="filter-group">
+            <div className="filter-group-header">
+              <span className="filter-label">Playtime</span>
+            </div>
+            <div className="toggle-grid">
+              {PLAYTIME_PRESETS.map(p => (
+                <Toggle
+                  key={p.label}
+                  active={currentPreset?.label === p.label}
+                  onClick={() => applyPlaytimePreset(p)}
+                >
+                  {p.label}
+                </Toggle>
+              ))}
+            </div>
+          </div>
+
+          {activeFilterCount > 0 && (
+            <button
+              className="reset-btn"
+              onClick={() => setFilters({ modes: [], genres: [], unplayed_only: false, playtime_min: 0, playtime_max: -1 })}
+            >
+              ✕ Clear filters
+            </button>
+          )}
         </div>
 
         {error && (
@@ -196,7 +267,7 @@ export default function App() {
                 <span key={i} style={{ animationDelay: `${i * 0.1}s` }}>{emoji}</span>
               ))}
             </div>
-            <p>Raiding your library...</p>
+            <p>{activeFilterCount > 0 ? "Searching your library…" : "Raiding your library…"}</p>
           </div>
         )}
 
@@ -206,7 +277,11 @@ export default function App() {
               <img src={result.player.avatar} alt={result.player.name} className="player-avatar" />
               <div className="player-info">
                 <span className="player-name">{result.player.name}</span>
-                <span className="player-games">{result.total_games.toLocaleString()} games in library</span>
+                <span className="player-games">
+                  {result.filtered_pool !== result.total_games
+                    ? `${result.filtered_pool} of ${result.total_games.toLocaleString()} games match`
+                    : `${result.total_games.toLocaleString()} games in library`}
+                </span>
               </div>
             </div>
 
@@ -222,33 +297,32 @@ export default function App() {
               </div>
 
               <div className="game-info">
-                <div className="game-tag">YOUR GAME FOR TODAY</div>
+                <div className="game-tag">Your game for today</div>
                 <h2 className="game-name">{result.game.name}</h2>
 
-                {/* Tags row */}
-                <div className="tag-row">
-                  {result.game.is_singleplayer && <span className="tag">Single-player</span>}
-                  {result.game.is_multiplayer && <span className="tag">Multiplayer</span>}
-                  {result.game.is_co_op && <span className="tag">Co-op</span>}
-                  {result.game.genres.slice(0, 3).map(g => (
-                    <span key={g} className="tag genre-tag">{capitalize(g)}</span>
+                <div className="game-tags-row">
+                  {result.game.genres.map(g => (
+                    <span key={g} className="tag tag-genre">{g}</span>
+                  ))}
+                  {result.game.categories.slice(0, 4).map(c => (
+                    <span key={c} className="tag tag-cat">{c}</span>
                   ))}
                 </div>
 
                 <div className="game-meta">
                   <span className="playtime">{formatPlaytime(result.game.playtime_forever)}</span>
+                  {result.game.achievements_total !== null && (
+                    <span className="achievements">
+                      🏆 {result.game.achievements_unlocked} / {result.game.achievements_total} achievements
+                    </span>
+                  )}
                 </div>
 
                 <div className="game-actions">
-                  <a
-                    href={result.game.store_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="store-btn"
-                  >
+                  <a href={result.game.store_url} target="_blank" rel="noopener noreferrer" className="store-btn">
                     View on Steam ↗
                   </a>
-                  <button className="reroll-btn" onClick={handleReroll}>
+                  <button className="reroll-btn" onClick={() => url.trim() && fetchGame(url.trim())}>
                     Reroll ↺
                   </button>
                 </div>
@@ -259,7 +333,7 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        Not affiliated with Valve or Steam. Requires a public Steam library.
+        Not affiliated with Valve or Steam · Requires a public library
       </footer>
     </div>
   );

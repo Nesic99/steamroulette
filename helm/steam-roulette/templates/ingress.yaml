@@ -1,0 +1,44 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "steam-roulette.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "steam-roulette.labels" . | nindent 4 }}
+  annotations:
+    {{- if eq .Values.ingress.className "traefik" }}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure,web
+    {{- end }}
+    {{- if .Values.ingress.tls.enabled }}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          # Route /api/* to the backend
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "steam-roulette.name" . }}-backend
+                port:
+                  number: {{ .Values.backend.port }}
+          # Everything else goes to the frontend
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "steam-roulette.name" . }}-frontend
+                port:
+                  number: 80
+{{- end }}

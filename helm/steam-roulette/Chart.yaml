@@ -1,0 +1,6 @@
+apiVersion: v2
+name: steam-roulette
+description: Pick a random game from a Steam library
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

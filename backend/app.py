@@ -1,40 +1,44 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import requests
-import random
-import re
-import os
+import requests, random, re, os
 from functools import lru_cache
 
 app = Flask(__name__)
 CORS(app)
-
 STEAM_API_KEY = os.environ.get("STEAM_API_KEY", "")
 
+CATEGORY_IDS = {
+    "singleplayer":      2,
+    "multiplayer":       1,
+    "co_op":             9,
+    "online_co_op":     38,
+    "local_multiplayer": 7,
+    "local_co_op":      37,
+    "pvp":              49,
+    "mmo":              20,
+}
 
-def resolve_steam_id(profile_url: str) -> str | None:
+def resolve_steam_id(profile_url):
     profile_url = profile_url.strip().rstrip("/")
     if re.match(r"^\d{17}$", profile_url):
         return profile_url
-    profiles_match = re.search(r"steamcommunity\.com/profiles/(\d{17})", profile_url)
-    if profiles_match:
-        return profiles_match.group(1)
-    id_match = re.search(r"steamcommunity\.com/id/([^/]+)", profile_url)
-    if id_match:
-        vanity = id_match.group(1)
-        resp = requests.get(
+    m = re.search(r"steamcommunity\.com/profiles/(\d{17})", profile_url)
+    if m:
+        return m.group(1)
+    m = re.search(r"steamcommunity\.com/id/([^/]+)", profile_url)
+    if m:
+        r = requests.get(
             "https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/",
-            params={"key": STEAM_API_KEY, "vanityurl": vanity},
+            params={"key": STEAM_API_KEY, "vanityurl": m.group(1)},
             timeout=10,
         )
-        data = resp.json()
-        if data.get("response", {}).get("success") == 1:
-            return data["response"]["steamid"]
+        d = r.json().get("response", {})
+        if d.get("success") == 1:
+            return d["steamid"]
     return None
 
-
-def get_owned_games(steam_id: str) -> list:
-    resp = requests.get(
+def get_owned_games(steam_id):
+    r = requests.get(
         "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/",
         params={
             "key": STEAM_API_KEY,
@@ -44,69 +48,90 @@ def get_owned_games(steam_id: str) -> list:
         },
         timeout=15,
     )
-    return resp.json().get("response", {}).get("games", [])
+    return r.json().get("response", {}).get("games", [])
 
-
-def get_player_summary(steam_id: str) -> dict:
-    resp = requests.get(
+def get_player_summary(steam_id):
+    r = requests.get(
         "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/",
         params={"key": STEAM_API_KEY, "steamids": steam_id},
         timeout=10,
     )
-    players = resp.json().get("response", {}).get("players", [])
+    players = r.json().get("response", {}).get("players", [])
     return players[0] if players else {}
 
-
 @lru_cache(maxsize=512)
-def get_store_details(appid: int) -> dict:
-    """Fetch genre/category metadata from the Steam store API. Cached per appid."""
+def get_app_details(appid):
     try:
-        resp = requests.get(
+        r = requests.get(
             "https://store.steampowered.com/api/appdetails",
-            params={"appids": appid, "filters": "categories,genres"},
+            params={"appids": appid, "filters": "basic,genres,categories"},
             timeout=8,
         )
-        data = resp.json().get(str(appid), {})
-        if not data.get("success"):
-            return {}
-        details = data.get("data", {})
-        raw_categories = details.get("categories", [])
-        category_ids = {int(c.get("id", -1)) for c in raw_categories}
-        genres = [g["description"].lower() for g in details.get("genres", [])]
-        categories = [c["description"].lower() for c in raw_categories]
-
-        return {
-            "genres": genres,
-            "categories": categories,
-            "is_singleplayer": 2 in category_ids,
-            "is_multiplayer": bool(category_ids & {1, 36}),
-            "is_co_op": bool(category_ids & {9, 37, 38}),
-        }
+        entry = r.json().get(str(appid), {})
+        if entry.get("success"):
+            return entry.get("data", {})
     except Exception:
-        return {}
+        pass
+    return None
 
+def get_achievements(steam_id, appid):
+    """Returns (unlocked, total) or (None, None) if the game has no achievements."""
+    try:
+        r = requests.get(
+            "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/",
+            params={"key": STEAM_API_KEY, "steamid": steam_id, "appid": appid},
+            timeout=8,
+        )
+        data = r.json().get("playerstats", {})
+        if not data.get("success"):
+            return None, None
+        achievements = data.get("achievements", [])
+        if not achievements:
+            return None, None
+        total = len(achievements)
+        unlocked = sum(1 for a in achievements if a.get("achieved") == 1)
+        return unlocked, total
+    except Exception:
+        return None, None
 
-def matches_filters(store_data: dict, filters: dict) -> bool:
-    if not store_data:
-        return False
+def passes_playtime(game, filters):
+    playtime_minutes = game.get("playtime_forever", 0)
+    playtime_hours = playtime_minutes / 60.0
 
-    mode = filters.get("mode", "any")
-    if mode == "singleplayer" and not store_data.get("is_singleplayer"):
-        return False
-    if mode == "multiplayer" and not store_data.get("is_multiplayer"):
-        return False
-    if mode == "co_op" and not store_data.get("is_co_op"):
-        return False
+    if filters.get("unplayed_only"):
+        return playtime_minutes == 0
 
-    genre_filter = filters.get("genre", "").strip().lower()
-    if genre_filter and genre_filter != "any":
-        wanted = {g.strip() for g in genre_filter.split(",") if g.strip()}
-        game_genres = set(store_data.get("genres", []))
-        if not wanted.intersection(game_genres):
-            return False
+    pt_min = int(filters.get("playtime_min", 0))
+    pt_max = int(filters.get("playtime_max", -1))
+
+    if pt_min > 0 and playtime_hours < pt_min:
+        return False
+    if pt_max >= 0 and playtime_hours > pt_max:
+        return False
 
     return True
 
+def passes_content(appid, filters):
+    modes = filters.get("modes", [])
+    genres = filters.get("genres", [])
+    if not modes and not genres:
+        return True
+
+    details = get_app_details(appid)
+    if details is None:
+        return True
+
+    if modes:
+        cat_ids = {c["id"] for c in details.get("categories", [])}
+        if not any(CATEGORY_IDS.get(m) in cat_ids for m in modes):
+            return False
+
+    if genres:
+        game_genres = {g["description"].lower() for g in details.get("genres", [])}
+        if not all(g.lower() in game_genres for g in genres):
+            return False
+
+    return True
 
 @app.route("/api/random-game", methods=["POST"])
 def random_game():
@@ -122,56 +147,52 @@ def random_game():
 
     steam_id = resolve_steam_id(profile_url)
     if not steam_id:
-        return jsonify({"error": "Could not resolve Steam ID from that URL. Make sure the profile is public."}), 400
+        return jsonify({"error": "Could not resolve Steam ID. Make sure the profile is public."}), 400
 
     try:
         games = get_owned_games(steam_id)
     except Exception as e:
-        return jsonify({"error": f"Failed to fetch games: {str(e)}"}), 502
+        return jsonify({"error": f"Failed to fetch games: {e}"}), 502
 
     if not games:
-        return jsonify({"error": "No games found. The library may be private or empty."}), 404
+        return jsonify({"error": "No games found. Library may be private or empty."}), 404
 
-    has_filters = bool(
-        (filters.get("mode") and filters.get("mode") != "any") or
-        (filters.get("genre") and filters.get("genre") != "any")
-    )
+    # Step 1: playtime filter — fast, no API calls
+    pool = [g for g in games if passes_playtime(g, filters)]
+    if not pool:
+        return jsonify({"error": "No games match your playtime filter."}), 404
 
-    game = None
-    store_data = {}
+    # Step 2: mode/genre filter — requires Steam Store API
+    chosen = None
+    has_content_filter = bool(filters.get("modes") or filters.get("genres"))
 
-    if not has_filters:
-        game = random.choice(games)
-        store_data = get_store_details(game["appid"])
-    else:
-        candidates = random.sample(games, min(len(games), 40))
-        for candidate in candidates:
-            sd = get_store_details(candidate["appid"])
-            if matches_filters(sd, filters):
-                game = candidate
-                store_data = sd
+    if has_content_filter:
+        random.shuffle(pool)
+        for g in pool[:20]:
+            if passes_content(g["appid"], filters):
+                chosen = g
                 break
+        if chosen is None:
+            return jsonify({"error": "No matching game found in 20 tries. Try relaxing your filters."}), 404
+    else:
+        chosen = random.choice(pool)
 
-        if game is None:
-            return jsonify({
-                "error": "No games matched your filters. Try relaxing them."
-            }), 404
-
-    appid = game["appid"]
+    appid = chosen["appid"]
     player = get_player_summary(steam_id)
+    details = get_app_details(appid) or {}
+    achievements_unlocked, achievements_total = get_achievements(steam_id, appid)
 
     return jsonify({
         "game": {
             "appid": appid,
-            "name": game.get("name", "Unknown Game"),
-            "playtime_forever": game.get("playtime_forever", 0),
+            "name": chosen.get("name", "Unknown"),
+            "playtime_forever": chosen.get("playtime_forever", 0),
             "header_image": f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg",
             "store_url": f"https://store.steampowered.com/app/{appid}",
-            "genres": store_data.get("genres", []),
-            "categories": store_data.get("categories", []),
-            "is_singleplayer": store_data.get("is_singleplayer", False),
-            "is_multiplayer": store_data.get("is_multiplayer", False),
-            "is_co_op": store_data.get("is_co_op", False),
+            "genres": [g["description"] for g in details.get("genres", [])],
+            "categories": [c["description"] for c in details.get("categories", [])],
+            "achievements_unlocked": achievements_unlocked,
+            "achievements_total": achievements_total,
         },
         "player": {
             "name": player.get("personaname", "Unknown"),
@@ -179,13 +200,12 @@ def random_game():
             "profile_url": player.get("profileurl", ""),
         },
         "total_games": len(games),
+        "filtered_pool": len(pool),
     })
-
 
 @app.route("/api/health")
 def health():
     return jsonify({"status": "ok"})
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
