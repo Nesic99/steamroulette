@@ -7,7 +7,7 @@ image:
 
 # Backend
 backend:
-  image:
+  image: ghcr.io/nesic99/steam-roulette-backend
     tag: latest
     # Override full image if needed: ghcr.io/yourname/steam-roulette-backend:sha-abc123
   replicaCount: 1
@@ -25,7 +25,7 @@ backend:
 
 # Frontend
 frontend:
-  image:
+  image: ghcr.io/nesic99/steam-roulette-frontend
     tag: latest
   replicaCount: 1
   port: 80
@@ -38,13 +38,9 @@ frontend:
       memory: 128Mi
 
 # Ingress
+# Ingress — disabled, traffic routed via external nginx proxy instead
 ingress:
-  enabled: true
-  className: traefik          # k3s default; change to nginx if using ingress-nginx
-  host: steamroulette.nesicdjordje.com  # replace with your actual domain
-  tls:
-    enabled: false
-    secretName: steam-roulette-tls
+  enabled: false
 
 # Namespace to deploy into
 namespace: steam-roulette
