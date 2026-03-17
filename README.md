@@ -15,7 +15,7 @@ Pick a random game from any Steam player's library — filter by genre, play mod
 - **Serving** — nginx (production), Vite dev server (development)
 - **Containerisation** — Docker, Docker Compose
 - **Orchestration** — Kubernetes (k3s), Helm
-- **CI/CD** — GitHub Actions → GHCR → k3s
+- **CI/CD** — GitHub Actions (lint → test → build) → GHCR
 
 ## Project Structure
 
@@ -44,7 +44,9 @@ steam-roulette/
 │   ├── .dockerignore
 │   ├── Dockerfile
 │   ├── app.py
-│   └── requirements.txt
+│   ├── requirements.txt
+│   └── tests/
+│       └── test_app.py
 └── frontend/
     ├── .dockerignore
     ├── Dockerfile
@@ -115,16 +117,15 @@ Open **http://localhost:5173** — Vite proxies `/api` requests to the backend a
 - `kubectl` and `helm` v3 installed locally
 - GitHub repo with Actions enabled (images are pushed to GHCR — no separate registry needed)
 
-### 1. Add GitHub Actions secrets
+### 1. Add GitHub Actions secret
 
-Go to **Settings → Secrets and variables → Actions**:
+Go to **Settings → Secrets and variables → Actions** and add one secret:
 
 | Secret | Value |
 |---|---|
-| `KUBECONFIG` | Full contents of your k3s config file (`/etc/rancher/k3s/k3s.yaml` on the node — replace `127.0.0.1` with the node's actual IP) |
 | `STEAM_API_KEY` | Your Steam Web API key |
 
-The pipeline creates and updates the in-cluster Kubernetes secret automatically — the key never touches your repository.
+The pipeline only lints, tests, and pushes images to GHCR — it does not deploy to the cluster. Deployments are done manually via Helm (see step 3). The `GITHUB_TOKEN` is used automatically for GHCR — no registry credentials needed.
 
 ### 2. Update `values.yaml`
 
@@ -176,13 +177,22 @@ The ingress template will automatically add the `cert-manager.io/cluster-issuer:
 
 ## CI/CD Pipeline
 
-Every push to `main` runs `.github/workflows/deploy.yml`:
+Every push and pull request to `main` runs `.github/workflows/deploy.yml` with three sequential jobs:
 
-1. **Build** — builds `backend` and `frontend` Docker images, pushes to GHCR tagged as `sha-<commit>` and `latest`
-2. **Secret** — creates/updates `steam-roulette-secret` in the cluster from the `STEAM_API_KEY` GitHub secret
-3. **Deploy** — runs `helm upgrade --install` with the exact SHA image tags, waits for both rollouts to complete
+**1. Lint** — all three must pass before tests run
+- `flake8` on the Python backend (max line length 120)
+- `tsc --noEmit` type-check on the TypeScript frontend
+- `helm lint` on the Helm chart
 
-Pull requests only run the build step — no images are pushed and nothing is deployed.
+**2. Test** *(runs after lint passes)*
+- `pytest` with coverage on `backend/tests/` — Steam API calls are fully mocked, no real key needed in CI
+
+**3. Build & push** *(runs after tests pass)*
+- Builds both Docker images via Buildx with GitHub Actions layer caching
+- On **pull requests**: images are built but not pushed — validates the Dockerfile compiles cleanly
+- On **push to `main`**: images are pushed to GHCR tagged as `sha-<short-commit>` and `latest`
+
+`GITHUB_TOKEN` is used automatically for GHCR auth — no extra registry credentials needed. To deploy after a successful build, run `helm upgrade` pointing at the new image tags (see [Production — k3s + Helm](#production--k3s--helm)).
 
 ---
 
@@ -276,10 +286,5 @@ helm uninstall steam-roulette -n steam-roulette
 
 - The Steam library must be **public**: Steam → Settings → Privacy → Game Details → Public
 - Accepts vanity URLs (`/id/name`), profile URLs (`/profiles/76561...`), and raw Steam64 IDs
-<<<<<<< HEAD
 - Achievement data respects the player's privacy settings — if game details are private the achievement badge simply won't appear
 - Not affiliated with Valve or Steam
-=======
-- With genre/mode filters active, each spin may take 1–3 seconds longer on the first roll (Steam Store API calls). Subsequent spins on already-checked games are instant thanks to in-memory caching
-- Not affiliated with Valve or Steam
->>>>>>> 1971b01122fe46c652bc6fe8b4c8a129443762da
