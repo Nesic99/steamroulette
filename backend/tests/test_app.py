@@ -21,7 +21,7 @@ def client():
 
 
 MOCK_DETAILS = {
-    "categories": [{"id": 2}, {"id": 1}],
+    "categories": [{"id": 2, "description": "Single-player"}, {"id": 1, "description": "Multi-player"}],
     "genres": [{"description": "Action"}, {"description": "RPG"}],
 }
 
