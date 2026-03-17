@@ -116,7 +116,11 @@ export default function App() {
       <div className="noise" />
 
       <header className="header">
-        <div className="logo-mark">🎲</div>
+        <div className="logo-mark">
+          <svg xmlns="http://www.w3.org/2000/svg" width="72" height="77" viewBox="0 0 140 150" aria-label="Dice logo">
+            <use href="#dice-logo" />
+          </svg>
+        </div>
         <h1 className="title">STEAM<span>ROULETTE</span></h1>
         <p className="subtitle">Stop browsing. Start playing.</p>
       </header>

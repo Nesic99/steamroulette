@@ -49,8 +49,8 @@ html, body, #root {
 }
 
 .logo-mark {
-  font-size: 3rem;
-  display: block;
+  display: flex;
+  justify-content: center;
   margin-bottom: 16px;
   filter: drop-shadow(0 0 20px rgba(27, 154, 245, 0.6));
   animation: float 3s ease-in-out infinite;

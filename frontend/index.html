@@ -4,6 +4,40 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Steam Roulette</title>
+
+    <!-- SVG favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 140 150'%3E%3Cpolygon fill='%231a1d24' stroke='%231b9af5' stroke-width='2' points='70,0 140,35 70,70 0,35'/%3E%3Cpolygon fill='%230d1a2e' stroke='%231b9af5' stroke-width='2' points='140,35 140,115 70,150 70,70'/%3E%3Cpolygon fill='%23111318' stroke='%231b9af5' stroke-width='2' points='0,35 70,70 70,150 0,115'/%3E%3Ccircle fill='%231b9af5' cx='42' cy='25' r='5'/%3E%3Ccircle fill='%231b9af5' cx='98' cy='25' r='5'/%3E%3Ccircle fill='%231b9af5' cx='70' cy='37' r='5'/%3E%3Ccircle fill='%231b9af5' cx='42' cy='49' r='5'/%3E%3Ccircle fill='%231b9af5' cx='98' cy='49' r='5'/%3E%3Ccircle fill='%231b9af5' cx='88' cy='75' r='4.5'/%3E%3Ccircle fill='%230d7fd4' cx='105' cy='92' r='4.5'/%3E%3Ccircle fill='%230a6ab8' cx='122' cy='109' r='4.5'/%3E%3Ccircle fill='%230d7fd4' cx='28' cy='82' r='4.5'/%3E%3Ccircle fill='%230a6ab8' cx='42' cy='120' r='4.5'/%3E%3C/svg%3E" />
+
+    <!-- Inline SVG logo used by App.tsx via #dice-logo symbol -->
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+      <symbol id="dice-logo" viewBox="0 0 140 150">
+        <polygon class="dice-top"  points="70,0 140,35 70,70 0,35"/>
+        <polygon class="dice-right" points="140,35 140,115 70,150 70,70"/>
+        <polygon class="dice-left"  points="0,35 70,70 70,150 0,115"/>
+        <!-- top face: 5 dots -->
+        <circle class="dice-dot" cx="42" cy="25" r="5"/>
+        <circle class="dice-dot" cx="98" cy="25" r="5"/>
+        <circle class="dice-dot" cx="70" cy="37" r="5"/>
+        <circle class="dice-dot" cx="42" cy="49" r="5"/>
+        <circle class="dice-dot" cx="98" cy="49" r="5"/>
+        <!-- right face: 3 dots -->
+        <circle class="dice-dot" cx="88"  cy="75"  r="4.5"/>
+        <circle class="dice-dot-mid" cx="105" cy="92"  r="4.5"/>
+        <circle class="dice-dot-dark" cx="122" cy="109" r="4.5"/>
+        <!-- left face: 2 dots -->
+        <circle class="dice-dot-mid"  cx="28" cy="82"  r="4.5"/>
+        <circle class="dice-dot-dark" cx="42" cy="120" r="4.5"/>
+      </symbol>
+    </svg>
+
+    <style>
+      .dice-top       { fill: #1a1d24; stroke: #1b9af5; stroke-width: 2; }
+      .dice-right     { fill: #0d1a2e; stroke: #1b9af5; stroke-width: 2; }
+      .dice-left      { fill: #111318; stroke: #1b9af5; stroke-width: 2; }
+      .dice-dot       { fill: #1b9af5; }
+      .dice-dot-mid   { fill: #0d7fd4; }
+      .dice-dot-dark  { fill: #0a6ab8; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
