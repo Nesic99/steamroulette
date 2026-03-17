@@ -276,5 +276,10 @@ helm uninstall steam-roulette -n steam-roulette
 
 - The Steam library must be **public**: Steam → Settings → Privacy → Game Details → Public
 - Accepts vanity URLs (`/id/name`), profile URLs (`/profiles/76561...`), and raw Steam64 IDs
+<<<<<<< HEAD
 - Achievement data respects the player's privacy settings — if game details are private the achievement badge simply won't appear
 - Not affiliated with Valve or Steam
+=======
+- With genre/mode filters active, each spin may take 1–3 seconds longer on the first roll (Steam Store API calls). Subsequent spins on already-checked games are instant thanks to in-memory caching
+- Not affiliated with Valve or Steam
+>>>>>>> 1971b01122fe46c652bc6fe8b4c8a129443762da
