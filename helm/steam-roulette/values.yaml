@@ -1,11 +1,8 @@
-# Global image settings
 image:
   registry: ghcr.io
-  # Set to your GitHub username/org, e.g. ghcr.io/yourname
-  repository: yourname/steam-roulette
-  pullPolicy: IfNotPresent
+  repository: nesic99/steam-roulette
+  pullPolicy: Always
 
-# Backend
 backend:
   image:
     tag: latest
@@ -21,9 +18,8 @@ backend:
   secretName: steam-roulette-secret
   service:
     type: NodePort
-    nodePort: 30503   # exposed on every k3s node at this port
+    nodePort: 30503
 
-# Frontend
 frontend:
   image:
     tag: latest
@@ -38,11 +34,9 @@ frontend:
       memory: 128Mi
   service:
     type: NodePort
-    nodePort: 30082   # exposed on every k3s node at this port
+    nodePort: 30082
 
-# Ingress - disabled, traffic routed via external nginx proxy instead
 ingress:
   enabled: false
 
-# Namespace to deploy into
 namespace: steam-roulette
