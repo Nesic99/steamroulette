@@ -10,12 +10,12 @@ Pick a random game from any Steam player's library — filter by genre, play mod
 
 ## Stack
 
-- **Backend** — Python, Flask, Steam Web API
+- **Backend** — Python, Flask, Gunicorn, Steam Web API
 - **Frontend** — React, TypeScript, Vite
-- **Serving** — nginx (production), Vite dev server (development)
+- **Serving** — nginx (container static files), Gunicorn (WSGI), external nginx (reverse proxy)
 - **Containerisation** — Docker, Docker Compose
 - **Orchestration** — Kubernetes (k3s), Helm
-- **CI/CD** — GitHub Actions (lint → test → build) → GHCR
+- **CI/CD** — GitHub Actions (lint + test + build) -> GHCR
 
 ## Project Structure
 
@@ -23,17 +23,21 @@ Pick a random game from any Steam player's library — filter by genre, play mod
 steam-roulette/
 ├── .env.example
 ├── .gitignore
+├── README.md
 ├── docker-compose.yml
+├── nginx.conf                          # external reverse proxy config
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml        # CI/CD pipeline
+│       └── deploy.yml                  # CI/CD pipeline
+├── systemd/
+│   ├── steam-roulette-backend.service  # port-forward systemd service
+│   └── steam-roulette-frontend.service
 ├── helm/
-│   └── steam-roulette/       # Helm chart
+│   └── steam-roulette/
 │       ├── Chart.yaml
 │       ├── values.yaml
 │       └── templates/
 │           ├── _helpers.tpl
-│           ├── namespace.yaml
 │           ├── secret.yaml
 │           ├── backend-deployment.yaml
 │           ├── backend-service.yaml
@@ -44,6 +48,7 @@ steam-roulette/
 │   ├── .dockerignore
 │   ├── Dockerfile
 │   ├── app.py
+│   ├── gunicorn.conf.py
 │   ├── requirements.txt
 │   └── tests/
 │       └── test_app.py
@@ -51,7 +56,7 @@ steam-roulette/
     ├── .dockerignore
     ├── Dockerfile
     ├── index.html
-    ├── nginx.conf
+    ├── nginx.conf                      # container nginx (static files + SPA fallback)
     ├── package.json
     ├── tsconfig.json
     ├── vite.config.ts
@@ -64,8 +69,6 @@ steam-roulette/
 ---
 
 ## Quick Start (Docker)
-
-The easiest way to run the full stack locally.
 
 **1. Get a Steam API key** — register for free at https://steamcommunity.com/dev/apikey
 
@@ -91,8 +94,8 @@ Open **http://localhost:8080**
 ```bash
 cd backend
 pip install -r requirements.txt
-export STEAM_API_KEY="your_key_here"   # Windows: set STEAM_API_KEY=your_key_here
-python app.py
+export STEAM_API_KEY="your_key_here"
+gunicorn --config gunicorn.conf.py app:app
 ```
 
 Runs at **http://localhost:5000**
@@ -115,84 +118,95 @@ Open **http://localhost:5173** — Vite proxies `/api` requests to the backend a
 
 - k3s cluster up and reachable
 - `kubectl` and `helm` v3 installed locally
-- GitHub repo with Actions enabled (images are pushed to GHCR — no separate registry needed)
+- External nginx proxy with access to the k3s node IP
+- GitHub repo with Actions enabled (images pushed to GHCR)
 
-### 1. Add GitHub Actions secret
+### 1. GitHub Actions secrets
 
-Go to **Settings → Secrets and variables → Actions** and add one secret:
+The pipeline only needs one secret for GHCR. Go to **Settings -> Secrets and variables -> Actions**:
 
 | Secret | Value |
 |---|---|
-| `STEAM_API_KEY` | Your Steam Web API key |
+| `GITHUB_TOKEN` | Provided automatically by GitHub — no action needed |
 
-The pipeline only lints, tests, and pushes images to GHCR — it does not deploy to the cluster. Deployments are done manually via Helm (see step 3). The `GITHUB_TOKEN` is used automatically for GHCR — no registry credentials needed.
+Your `STEAM_API_KEY` is managed as a Kubernetes secret directly on the cluster — never stored in GitHub or the repo.
 
 ### 2. Update `values.yaml`
 
-Two fields must be set before the first deploy:
-
 ```yaml
 image:
-  repository: yourname/steam-roulette   # your GitHub username or org
-
-ingress:
-  host: steam-roulette.yourdomain.com   # your domain or local hostname
+  repository: yourname/steam-roulette
 ```
 
-k3s ships with **Traefik** as the default ingress controller, which `values.yaml` targets out of the box. If you're using `ingress-nginx`, change `ingress.className` to `nginx`.
+NodePorts default to `30082` (frontend) and `30503` (backend). Change if those conflict with existing deployments.
 
-### 3. First manual deploy
+### 3. Create the Steam API key secret
 
 ```bash
-# Create namespace
-kubectl create namespace steam-roulette
-
-# Create the secret
 kubectl create secret generic steam-roulette-secret \
   --from-literal=STEAM_API_KEY=your_key_here \
-  --namespace steam-roulette
+  --namespace steam-roulette \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
 
-# Install the chart
+### 4. Deploy with Helm
+
+```bash
+kubectl create namespace steam-roulette --dry-run=client -o yaml | kubectl apply -f -
+
 helm upgrade --install steam-roulette ./helm/steam-roulette \
   --namespace steam-roulette \
-  --set image.repository=yourname/steam-roulette \
+  --set backend.image.tag=sha-abc1234 \
+  --set frontend.image.tag=sha-abc1234 \
   --wait
 ```
 
-### TLS with cert-manager (optional)
+The SHA tag is shown in the GitHub Actions job summary after a successful build.
 
-If cert-manager is installed on the cluster:
+### 5. Configure external nginx
 
-```yaml
-# values.yaml
-ingress:
-  tls:
-    enabled: true
-    secretName: steam-roulette-tls
+Edit `nginx.conf` — replace the two placeholders and install:
+
+```bash
+sudo cp nginx.conf /etc/nginx/sites-available/steam-roulette
+sudo ln -s /etc/nginx/sites-available/steam-roulette /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-The ingress template will automatically add the `cert-manager.io/cluster-issuer: letsencrypt-prod` annotation.
+Run `certbot --nginx -d yourdomain.com` to provision TLS.
+
+### 6. Port-forward systemd services (optional)
+
+If your nginx and k3s run on different machines:
+
+```bash
+sudo cp systemd/steam-roulette-*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now steam-roulette-frontend steam-roulette-backend
+```
 
 ---
 
 ## CI/CD Pipeline
 
-Every push and pull request to `main` runs `.github/workflows/deploy.yml` with three sequential jobs:
+Every push and pull request to `main` runs `.github/workflows/deploy.yml` with four jobs:
 
-**1. Lint** — all three must pass before tests run
-- `flake8` on the Python backend (max line length 120)
-- `tsc --noEmit` type-check on the TypeScript frontend
-- `helm lint` on the Helm chart
+**1. Lint & Test — Backend**
+- `flake8` on `app.py` and `tests/`
+- `pytest` with coverage — minimum 60% enforced
 
-**2. Test** *(runs after lint passes)*
-- `pytest` with coverage on `backend/tests/` — Steam API calls are fully mocked, no real key needed in CI
+**2. Lint — Frontend (TypeScript)**
+- `npm ci` then `tsc --noEmit`
 
-**3. Build & push** *(runs after tests pass)*
-- Builds both Docker images via Buildx with GitHub Actions layer caching
-- On **pull requests**: images are built but not pushed — validates the Dockerfile compiles cleanly
-- On **push to `main`**: images are pushed to GHCR tagged as `sha-<short-commit>` and `latest`
+**3. Lint — Helm Chart**
+- `helm lint` + `helm template --debug` dry-run
 
-`GITHUB_TOKEN` is used automatically for GHCR auth — no extra registry credentials needed. To deploy after a successful build, run `helm upgrade` pointing at the new image tags (see [Production — k3s + Helm](#production--k3s--helm)).
+**4. Build & Push Images** *(push to `main` only)*
+- Builds both images via Buildx with layer caching
+- Pushes to GHCR tagged as `sha-<commit>` and `latest`
+- Writes a summary to the Actions UI
+
+Pull requests run all lint jobs but do not push images.
 
 ---
 
@@ -201,11 +215,12 @@ Every push and pull request to `main` runs `.github/workflows/deploy.yml` with t
 1. User pastes a Steam profile URL (e.g. `steamcommunity.com/id/gaben`)
 2. Optional filters are selected — play mode, genre, playtime range
 3. Frontend POSTs to `/api/random-game` with the URL and active filters
-4. Backend resolves the vanity URL → Steam64 ID
+4. Backend resolves the vanity URL to a Steam64 ID
 5. Fetches the player's full game library
-6. Applies playtime filters locally (no API call needed), then checks up to 20 random candidates against the Steam Store API for genre/category metadata
-7. Fetches achievement stats for the chosen game
-8. Returns the game with full metadata — genres, categories, achievements, header image, store link
+6. Applies playtime filters locally (no API call needed)
+7. Checks up to 20 random candidates against the Steam Store API for genre/category metadata
+8. Fetches achievement stats for the chosen game
+9. Returns the game with full metadata and logs the spin to stdout
 
 ### Filters
 
@@ -213,9 +228,7 @@ Every push and pull request to `main` runs `.github/workflows/deploy.yml` with t
 |---|---|---|
 | Play mode | OR — any selected mode must match | Single-player, Multiplayer, Co-op, Online Co-op, Local Multi, Local Co-op, PvP, MMO |
 | Genre | AND — all selected genres must match | Action, Adventure, Casual, Early Access, Free to Play, Indie, Massively Multiplayer, RPG, Racing, Simulation, Sports, Strategy |
-| Playtime | Preset ranges | Any, Unplayed, <1h, 1–10h, 10–50h, 50h+ |
-
-Genre/category metadata is fetched from the Steam Store API and cached in memory — repeated spins on an already-checked game are instant.
+| Playtime | Preset ranges | Any, Unplayed, <1h, 1-10h, 10-50h, 50h+ |
 
 ### API Endpoint
 
@@ -259,6 +272,21 @@ Response:
 }
 ```
 
+### Logging
+
+All API calls are logged as structured JSON to stdout. Health checks are excluded. View live:
+
+```bash
+# All logs
+kubectl logs -f deployment/steam-roulette-backend -n steam-roulette
+
+# Spins only
+kubectl logs deployment/steam-roulette-backend -n steam-roulette | grep '"event": "spin"'
+
+# Pretty-printed
+kubectl logs -f deployment/steam-roulette-backend -n steam-roulette | grep -v Werkzeug | jq .
+```
+
 ---
 
 ## Useful Commands
@@ -267,11 +295,18 @@ Response:
 # Check pod status
 kubectl get pods -n steam-roulette
 
+# Restart both deployments
+kubectl rollout restart deployment/steam-roulette-frontend deployment/steam-roulette-backend -n steam-roulette
+
 # Tail backend logs
 kubectl logs -f deployment/steam-roulette-backend -n steam-roulette
 
-# Tail frontend logs
-kubectl logs -f deployment/steam-roulette-frontend -n steam-roulette
+# Rotate Steam API key
+kubectl create secret generic steam-roulette-secret \
+  --from-literal=STEAM_API_KEY=new_key_here \
+  --namespace steam-roulette \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl rollout restart deployment/steam-roulette-backend -n steam-roulette
 
 # Lint the Helm chart
 helm lint ./helm/steam-roulette
@@ -284,7 +319,7 @@ helm uninstall steam-roulette -n steam-roulette
 
 ## Notes
 
-- The Steam library must be **public**: Steam → Settings → Privacy → Game Details → Public
+- The Steam library must be **public**: Steam -> Settings -> Privacy -> Game Details -> Public
 - Accepts vanity URLs (`/id/name`), profile URLs (`/profiles/76561...`), and raw Steam64 IDs
-- Achievement data respects the player's privacy settings — if game details are private the achievement badge simply won't appear
+- Achievement data respects the player's privacy settings — if game details are private the badge won't appear
 - Not affiliated with Valve or Steam
