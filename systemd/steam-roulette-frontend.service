@@ -1,0 +1,17 @@
+[Unit]
+Description=Port-forward steam-roulette frontend (k8s -> local 30082)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/kubectl port-forward \
+    service/steam-roulette-frontend \
+    30082:80 \
+    --namespace steam-roulette \
+    --address 0.0.0.0
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

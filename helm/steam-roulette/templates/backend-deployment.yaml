@@ -17,6 +17,10 @@ spec:
         app: {{ include "steam-roulette.name" . }}-backend
         app.kubernetes.io/component: backend
     spec:
+      {{- if .Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.image.pullSecret }}
+      {{- end }}
       containers:
         - name: backend
           image: {{ include "steam-roulette.backendImage" . }}
@@ -29,6 +33,11 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.backend.secretName }}
                   key: STEAM_API_KEY
+            - name: METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.secretName }}
+                  key: METRICS_TOKEN
           livenessProbe:
             httpGet:
               path: /api/health

@@ -1,0 +1,17 @@
+[Unit]
+Description=Port-forward steam-roulette backend (k8s -> local 30503)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/kubectl port-forward \
+    service/steam-roulette-backend \
+    30503:5000 \
+    --namespace steam-roulette \
+    --address 0.0.0.0
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

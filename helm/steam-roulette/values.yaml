@@ -2,6 +2,7 @@ image:
   registry: ghcr.io
   repository: nesic99/steam-roulette
   pullPolicy: Always
+  pullSecret: ghcr-secret
 
 backend:
   image:
@@ -16,6 +17,10 @@ backend:
       cpu: 500m
       memory: 256Mi
   secretName: steam-roulette-secret
+  metrics:
+    enabled: true
+    port: 5000
+    path: /metrics
   service:
     type: NodePort
     nodePort: 30503

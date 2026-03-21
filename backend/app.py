@@ -1,11 +1,51 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from prometheus_flask_exporter import PrometheusMetrics
+from prometheus_client import Counter, Histogram
 import requests, random, re, os, logging, time, json
 from functools import lru_cache
 
 app = Flask(__name__)
 CORS(app)
 STEAM_API_KEY = os.environ.get("STEAM_API_KEY", "")
+
+# Prometheus metrics — exposed at /metrics
+metrics = PrometheusMetrics(app, path="/metrics", group_by="endpoint")
+metrics.info("steam_roulette_info", "Steam Roulette backend", version="1.0.0")
+
+METRICS_TOKEN = os.environ.get("METRICS_TOKEN", "")
+
+
+def check_metrics_token():
+    """Return 401 if the request does not carry a valid Bearer token."""
+    if not METRICS_TOKEN:
+        return None  # token not configured, allow (dev fallback)
+    auth = request.headers.get("Authorization", "")
+    if auth != f"Bearer {METRICS_TOKEN}":
+        return jsonify({"error": "Unauthorized"}), 401
+    return None
+
+
+# Custom metrics
+spins_total = Counter(
+    "steam_roulette_spins_total",
+    "Total number of successful game spins",
+    ["player"],
+)
+spin_duration = Histogram(
+    "steam_roulette_spin_duration_seconds",
+    "Time spent processing a spin request",
+)
+filter_no_match = Counter(
+    "steam_roulette_filter_no_match_total",
+    "Spins that returned no result due to filters",
+    ["reason"],
+)
+library_size = Histogram(
+    "steam_roulette_library_size",
+    "Number of games in the player library",
+    buckets=[10, 50, 100, 250, 500, 1000, 2500, 5000],
+)
 
 # Structured JSON logger
 logger = logging.getLogger("steam-roulette")
@@ -168,6 +208,12 @@ def mark_start_time():
     request.environ["_start_time"] = time.time()
 
 
+@app.before_request
+def protect_metrics():
+    if request.path == "/metrics":
+        return check_metrics_token()
+
+
 @app.route("/api/random-game", methods=["POST"])
 def random_game():
     if not STEAM_API_KEY:
@@ -198,6 +244,7 @@ def random_game():
     pool = [g for g in games if passes_playtime(g, filters)]
     if not pool:
         log("playtime_filter_no_match", steam_id=steam_id, filters=filters)
+        filter_no_match.labels(reason="playtime").inc()
         return jsonify({"error": "No games match your playtime filter."}), 404
 
     chosen = None
@@ -211,6 +258,7 @@ def random_game():
                 break
         if chosen is None:
             log("content_filter_no_match", steam_id=steam_id, filters=filters)
+            filter_no_match.labels(reason="content").inc()
             return jsonify({"error": "No matching game found in 20 tries. Try relaxing your filters."}), 404
     else:
         chosen = random.choice(pool)
@@ -220,10 +268,11 @@ def random_game():
     details = get_app_details(appid) or {}
     achievements_unlocked, achievements_total = get_achievements(steam_id, appid)
 
+    player_name = player.get("personaname", "Unknown")
     log(
         "spin",
         steam_id=steam_id,
-        player=player.get("personaname", "Unknown"),
+        player=player_name,
         game=chosen.get("name", "Unknown"),
         appid=appid,
         total_games=len(games),
@@ -236,6 +285,9 @@ def random_game():
             "playtime_max": filters.get("playtime_max", -1),
         },
     )
+    spins_total.labels(player=player_name).inc()
+    library_size.observe(len(games))
+    spin_duration.observe(time.time() - request.environ.get("_start_time", time.time()))
 
     return jsonify({
         "game": {
