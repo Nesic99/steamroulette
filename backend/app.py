@@ -1,11 +1,24 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import requests, random, re, os
+import requests, random, re, os, logging, time, json
 from functools import lru_cache
 
 app = Flask(__name__)
 CORS(app)
 STEAM_API_KEY = os.environ.get("STEAM_API_KEY", "")
+
+# Structured JSON logger
+logger = logging.getLogger("steam-roulette")
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter("%(message)s"))
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+
+
+def log(event, **kwargs):
+    """Emit a single structured JSON log line."""
+    logger.info(json.dumps({"event": event, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **kwargs}))
+
 
 CATEGORY_IDS = {
     "singleplayer":      2,
@@ -17,6 +30,7 @@ CATEGORY_IDS = {
     "pvp":              49,
     "mmo":              20,
 }
+
 
 def resolve_steam_id(profile_url):
     profile_url = profile_url.strip().rstrip("/")
@@ -37,6 +51,7 @@ def resolve_steam_id(profile_url):
             return d["steamid"]
     return None
 
+
 def get_owned_games(steam_id):
     r = requests.get(
         "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/",
@@ -50,6 +65,7 @@ def get_owned_games(steam_id):
     )
     return r.json().get("response", {}).get("games", [])
 
+
 def get_player_summary(steam_id):
     r = requests.get(
         "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/",
@@ -58,6 +74,7 @@ def get_player_summary(steam_id):
     )
     players = r.json().get("response", {}).get("players", [])
     return players[0] if players else {}
+
 
 @lru_cache(maxsize=512)
 def get_app_details(appid):
@@ -74,8 +91,8 @@ def get_app_details(appid):
         pass
     return None
 
+
 def get_achievements(steam_id, appid):
-    """Returns (unlocked, total) or (None, None) if the game has no achievements."""
     try:
         r = requests.get(
             "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/",
@@ -94,44 +111,62 @@ def get_achievements(steam_id, appid):
     except Exception:
         return None, None
 
+
 def passes_playtime(game, filters):
     playtime_minutes = game.get("playtime_forever", 0)
     playtime_hours = playtime_minutes / 60.0
-
     if filters.get("unplayed_only"):
         return playtime_minutes == 0
-
     pt_min = int(filters.get("playtime_min", 0))
     pt_max = int(filters.get("playtime_max", -1))
-
     if pt_min > 0 and playtime_hours < pt_min:
         return False
     if pt_max >= 0 and playtime_hours > pt_max:
         return False
-
     return True
+
 
 def passes_content(appid, filters):
     modes = filters.get("modes", [])
     genres = filters.get("genres", [])
     if not modes and not genres:
         return True
-
     details = get_app_details(appid)
     if details is None:
         return True
-
     if modes:
         cat_ids = {c["id"] for c in details.get("categories", [])}
         if not any(CATEGORY_IDS.get(m) in cat_ids for m in modes):
             return False
-
     if genres:
         game_genres = {g["description"].lower() for g in details.get("genres", [])}
         if not all(g.lower() in game_genres for g in genres):
             return False
-
     return True
+
+
+@app.after_request
+def log_request(response):
+    """Log every request with method, path, status and latency."""
+    # Skip health checks to avoid log spam
+    if request.path == "/api/health":
+        return response
+    duration_ms = round((time.time() - request.environ.get("_start_time", time.time())) * 1000)
+    log(
+        "request",
+        method=request.method,
+        path=request.path,
+        status=response.status_code,
+        ip=request.headers.get("X-Forwarded-For", request.remote_addr),
+        duration_ms=duration_ms,
+    )
+    return response
+
+
+@app.before_request
+def mark_start_time():
+    request.environ["_start_time"] = time.time()
+
 
 @app.route("/api/random-game", methods=["POST"])
 def random_game():
@@ -147,22 +182,24 @@ def random_game():
 
     steam_id = resolve_steam_id(profile_url)
     if not steam_id:
+        log("resolve_failed", profile_url=profile_url)
         return jsonify({"error": "Could not resolve Steam ID. Make sure the profile is public."}), 400
 
     try:
         games = get_owned_games(steam_id)
     except Exception as e:
+        log("library_fetch_failed", steam_id=steam_id, error=str(e))
         return jsonify({"error": f"Failed to fetch games: {e}"}), 502
 
     if not games:
+        log("empty_library", steam_id=steam_id)
         return jsonify({"error": "No games found. Library may be private or empty."}), 404
 
-    # Step 1: playtime filter — fast, no API calls
     pool = [g for g in games if passes_playtime(g, filters)]
     if not pool:
+        log("playtime_filter_no_match", steam_id=steam_id, filters=filters)
         return jsonify({"error": "No games match your playtime filter."}), 404
 
-    # Step 2: mode/genre filter — requires Steam Store API
     chosen = None
     has_content_filter = bool(filters.get("modes") or filters.get("genres"))
 
@@ -173,6 +210,7 @@ def random_game():
                 chosen = g
                 break
         if chosen is None:
+            log("content_filter_no_match", steam_id=steam_id, filters=filters)
             return jsonify({"error": "No matching game found in 20 tries. Try relaxing your filters."}), 404
     else:
         chosen = random.choice(pool)
@@ -181,6 +219,23 @@ def random_game():
     player = get_player_summary(steam_id)
     details = get_app_details(appid) or {}
     achievements_unlocked, achievements_total = get_achievements(steam_id, appid)
+
+    log(
+        "spin",
+        steam_id=steam_id,
+        player=player.get("personaname", "Unknown"),
+        game=chosen.get("name", "Unknown"),
+        appid=appid,
+        total_games=len(games),
+        filtered_pool=len(pool),
+        filters={
+            "modes": filters.get("modes", []),
+            "genres": filters.get("genres", []),
+            "unplayed_only": filters.get("unplayed_only", False),
+            "playtime_min": filters.get("playtime_min", 0),
+            "playtime_max": filters.get("playtime_max", -1),
+        },
+    )
 
     return jsonify({
         "game": {
@@ -203,9 +258,11 @@ def random_game():
         "filtered_pool": len(pool),
     })
 
+
 @app.route("/api/health")
 def health():
     return jsonify({"status": "ok"})
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
