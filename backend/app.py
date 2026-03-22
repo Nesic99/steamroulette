@@ -19,7 +19,7 @@ METRICS_TOKEN = os.environ.get("METRICS_TOKEN", "")
 def check_metrics_token():
     """Return 401 if the request does not carry a valid Bearer token."""
     if not METRICS_TOKEN:
-        return None  # token not configured, allow (dev fallback)
+        return jsonify({"error": "Metrics token not configured"}), 503
     auth = request.headers.get("Authorization", "")
     if auth != f"Bearer {METRICS_TOKEN}":
         return jsonify({"error": "Unauthorized"}), 401
