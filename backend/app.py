@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from prometheus_flask_exporter import PrometheusMetrics
-from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, REGISTRY
+from prometheus_client import Counter, Histogram, REGISTRY
 from prometheus_client.core import GaugeMetricFamily
 from collections import deque
 import requests, random, re, os, logging, time, json, threading
