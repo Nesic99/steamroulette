@@ -1,15 +1,17 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from prometheus_flask_exporter import PrometheusMetrics
-from prometheus_client import Counter, Histogram
-import requests, random, re, os, logging, time, json
+from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, REGISTRY
+from prometheus_client.core import GaugeMetricFamily
+from collections import deque
+import requests, random, re, os, logging, time, json, threading
 from functools import lru_cache
 
 app = Flask(__name__)
 CORS(app)
 STEAM_API_KEY = os.environ.get("STEAM_API_KEY", "")
 
-# Prometheus metrics — exposed at /metrics
+# Prometheus metrics
 metrics = PrometheusMetrics(app, path="/metrics", group_by="endpoint")
 metrics.info("steam_roulette_info", "Steam Roulette backend", version="1.0.0")
 
@@ -17,7 +19,6 @@ METRICS_TOKEN = os.environ.get("METRICS_TOKEN", "")
 
 
 def check_metrics_token():
-    """Return 401 if the request does not carry a valid Bearer token."""
     if not METRICS_TOKEN:
         return jsonify({"error": "Metrics token not configured"}), 503
     auth = request.headers.get("Authorization", "")
@@ -26,11 +27,11 @@ def check_metrics_token():
     return None
 
 
-# Custom metrics
+# Custom Prometheus metrics
 spins_total = Counter(
     "steam_roulette_spins_total",
     "Total number of successful game spins",
-    ["player"],
+    ["player", "game"],
 )
 spin_duration = Histogram(
     "steam_roulette_spin_duration_seconds",
@@ -47,6 +48,39 @@ library_size = Histogram(
     buckets=[10, 50, 100, 250, 500, 1000, 2500, 5000],
 )
 
+# In-memory ring buffer of the 10 most recent spins
+# deque is thread-safe for append/popleft
+recent_spins = deque(maxlen=10)
+recent_spins_lock = threading.Lock()
+
+class RecentSpinsCollector:
+    """Custom Prometheus collector that exposes recent spins as a gauge."""
+
+    def describe(self):
+        yield GaugeMetricFamily(
+            "steam_roulette_recent_spin",
+            "Recent game spins with player and game labels",
+        )
+
+    def collect(self):
+        g = GaugeMetricFamily(
+            "steam_roulette_recent_spin",
+            "Recent game spins (position = recency, 1 = most recent)",
+            labels=["position", "player", "game", "appid", "ts"],
+        )
+        with recent_spins_lock:
+            spins = list(recent_spins)
+        for i, spin in enumerate(spins, start=1):
+            g.add_metric(
+                [str(i), spin["player"], spin["game"], str(spin["appid"]), spin["ts"]],
+                i,
+            )
+        yield g
+
+
+REGISTRY.register(RecentSpinsCollector())
+
+
 # Structured JSON logger
 logger = logging.getLogger("steam-roulette")
 handler = logging.StreamHandler()
@@ -56,7 +90,6 @@ logger.setLevel(logging.INFO)
 
 
 def log(event, **kwargs):
-    """Emit a single structured JSON log line."""
     logger.info(json.dumps({"event": event, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **kwargs}))
 
 
@@ -187,8 +220,6 @@ def passes_content(appid, filters):
 
 @app.after_request
 def log_request(response):
-    """Log every request with method, path, status and latency."""
-    # Skip health checks to avoid log spam
     if request.path == "/api/health":
         return response
     duration_ms = round((time.time() - request.environ.get("_start_time", time.time())) * 1000)
@@ -269,11 +300,14 @@ def random_game():
     achievements_unlocked, achievements_total = get_achievements(steam_id, appid)
 
     player_name = player.get("personaname", "Unknown")
+    game_name = chosen.get("name", "Unknown")
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
     log(
         "spin",
         steam_id=steam_id,
         player=player_name,
-        game=chosen.get("name", "Unknown"),
+        game=game_name,
         appid=appid,
         total_games=len(games),
         filtered_pool=len(pool),
@@ -285,14 +319,31 @@ def random_game():
             "playtime_max": filters.get("playtime_max", -1),
         },
     )
-    spins_total.labels(player=player_name).inc()
+
+    # Prometheus
+    spins_total.labels(player=player_name, game=game_name).inc()
     library_size.observe(len(games))
     spin_duration.observe(time.time() - request.environ.get("_start_time", time.time()))
+
+    # Recent spins buffer
+    spin_entry = {
+        "ts": ts,
+        "player": player_name,
+        "player_avatar": player.get("avatarfull", ""),
+        "player_url": player.get("profileurl", ""),
+        "game": game_name,
+        "appid": appid,
+        "header_image": f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg",
+        "store_url": f"https://store.steampowered.com/app/{appid}",
+        "genres": [g["description"] for g in details.get("genres", [])],
+    }
+    with recent_spins_lock:
+        recent_spins.appendleft(spin_entry)
 
     return jsonify({
         "game": {
             "appid": appid,
-            "name": chosen.get("name", "Unknown"),
+            "name": game_name,
             "playtime_forever": chosen.get("playtime_forever", 0),
             "header_image": f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg",
             "store_url": f"https://store.steampowered.com/app/{appid}",
@@ -302,13 +353,14 @@ def random_game():
             "achievements_total": achievements_total,
         },
         "player": {
-            "name": player.get("personaname", "Unknown"),
+            "name": player_name,
             "avatar": player.get("avatarfull", ""),
             "profile_url": player.get("profileurl", ""),
         },
         "total_games": len(games),
         "filtered_pool": len(pool),
     })
+
 
 
 @app.route("/api/health")
