@@ -10,18 +10,39 @@
 
 ---
 
-## 1. Secrets
+## 1. Secrets (external-first)
 
-### GitHub Actions secrets
+This chart is now external-secret-first:
 
-Go to **Settings → Secrets and variables → Actions** and add:
+- `backend.createSecret=false` by default
+- `postgres.createSecret=false` by default
 
-| Secret | Value |
-|---|---|
-| `KUBECONFIG` | Full contents of your k3s kubeconfig (`/etc/rancher/k3s/k3s.yaml` on the server — replace `127.0.0.1` with your server's IP) |
-| `STEAM_API_KEY` | Your Steam Web API key |
+Create both required secrets before install:
 
-The pipeline creates/updates the Kubernetes secret automatically on every deploy — you never commit the key.
+```bash
+kubectl create namespace steam-roulette --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl create secret generic steam-roulette-secret \
+  --from-literal=STEAM_API_KEY=your_key_here \
+  --from-literal=METRICS_TOKEN=your_metrics_token \
+  -n steam-roulette
+
+kubectl create secret generic steam-roulette-postgres-secret \
+  --from-literal=POSTGRES_DB=steamroulette \
+  --from-literal=POSTGRES_USER=steamroulette \
+  --from-literal=POSTGRES_PASSWORD=strong_password_here \
+  --from-literal=DATABASE_URL='postgresql://steamroulette:strong_password_here@steam-roulette-postgres:5432/steamroulette' \
+  -n steam-roulette
+```
+
+You can still let Helm create secrets by setting:
+
+```yaml
+backend:
+  createSecret: true
+postgres:
+  createSecret: true
+```
 
 ---
 
@@ -35,6 +56,13 @@ image:
 
 ingress:
   host: steam-roulette.yourdomain.com   # your actual domain or local hostname
+
+postgres:
+  enabled: true
+  backup:
+    enabled: true
+    schedule: "0 */6 * * *"
+    retentionDays: 7
 ```
 
 ### TLS with cert-manager (optional)
@@ -53,14 +81,6 @@ ingress:
 ## 3. Manual deploy (first time or local)
 
 ```bash
-# Create namespace
-kubectl create namespace steam-roulette
-
-# Create the secret manually
-kubectl create secret generic steam-roulette-secret \
-  --from-literal=STEAM_API_KEY=your_key_here \
-  --namespace steam-roulette
-
 # Install chart
 helm upgrade --install steam-roulette ./helm/steam-roulette \
   --namespace steam-roulette \
@@ -68,19 +88,28 @@ helm upgrade --install steam-roulette ./helm/steam-roulette \
   --wait
 ```
 
+On install/upgrade, a DB migration job runs before workloads (`pre-install,pre-upgrade` Helm hook).
+
 ---
 
-## 4. CI/CD pipeline
+## 4. Backup and restore
 
-Every push to `main`:
+If `postgres.backup.enabled=true`, the chart creates:
 
-1. Builds both Docker images and pushes to GHCR tagged with `sha-<commit>` and `latest`
-2. Writes the kubeconfig to the runner
-3. Creates/updates the `steam-roulette-secret` from the GitHub secret
-4. Runs `helm upgrade --install` with the new image tags
-5. Verifies both deployments roll out successfully
+- a backup PVC: `steam-roulette-postgres-backup-pvc`
+- a CronJob: `steam-roulette-postgres-backup`
 
-Pull requests only run the build step — no deploy.
+Backups are gzipped SQL dumps in `/backups` and old files are pruned via `retentionDays`.
+
+Example restore:
+
+```bash
+kubectl -n steam-roulette exec -it statefulset/steam-roulette-postgres -- sh
+
+# inside the pod:
+export PGPASSWORD="$POSTGRES_PASSWORD"
+gunzip -c /backups/steamroulette-YYYYMMDDHHMMSS.sql.gz | psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+```
 
 ---
 
@@ -93,8 +122,14 @@ kubectl get pods -n steam-roulette
 # Tail backend logs
 kubectl logs -f deployment/steam-roulette-backend -n steam-roulette
 
+# Migration job logs
+kubectl logs -f job/steam-roulette-db-migrate -n steam-roulette
+
 # Tail frontend logs
 kubectl logs -f deployment/steam-roulette-frontend -n steam-roulette
+
+# Postgres logs
+kubectl logs -f statefulset/steam-roulette-postgres -n steam-roulette
 
 # Uninstall
 helm uninstall steam-roulette -n steam-roulette

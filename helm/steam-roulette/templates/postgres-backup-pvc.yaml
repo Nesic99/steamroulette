@@ -1,0 +1,19 @@
+{{- if and .Values.postgres.enabled .Values.postgres.backup.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "steam-roulette.name" . }}-postgres-backup-pvc
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "steam-roulette.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.postgres.backup.storage.storageClassName }}
+  storageClassName: {{ .Values.postgres.backup.storage.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.postgres.backup.storage.size }}
+{{- end }}
