@@ -443,4 +443,3 @@ def health():
 
 # DB schema migrations are run by a dedicated one-time job (db_init.py).
 log(log_msg)
-
