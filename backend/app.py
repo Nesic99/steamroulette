@@ -10,9 +10,9 @@ import psycopg2.pool
 app = Flask(__name__)
 CORS(app)
 
-STEAM_API_KEY  = os.environ.get("STEAM_API_KEY", "")
-METRICS_TOKEN  = os.environ.get("METRICS_TOKEN", "")
-DATABASE_URL   = os.environ.get("DATABASE_URL", "")
+STEAM_API_KEY = os.environ.get("STEAM_API_KEY", "")
+METRICS_TOKEN = os.environ.get("METRICS_TOKEN", "")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 # Connection pool — min 1, max 5 connections
 db_pool = None
@@ -51,7 +51,6 @@ def init_db():
         conn.commit()
         return True
     except Exception as e:
-        conn.rollback()
         logging.getLogger("steam-roulette").error(json.dumps({"event": "init_db_failed", "error": str(e)}))
         return False
     finally:
@@ -81,7 +80,6 @@ def persist_spin(spin: dict):
             """, spin)
         conn.commit()
     except Exception as e:
-        conn.rollback()
         logging.getLogger("steam-roulette").error(
             json.dumps({"event": "persist_spin_failed", "error": str(e)})
         )
@@ -100,8 +98,7 @@ def persist_filter_failure(reason: str, steam_id: str):
                 (reason, steam_id)
             )
         conn.commit()
-    except Exception as e:
-        conn.rollback()
+    except Exception:
     finally:
         release_db(conn)
 
@@ -446,3 +443,4 @@ def health():
 
 # DB schema migrations are run by a dedicated one-time job (db_init.py).
 log(log_msg)
+
