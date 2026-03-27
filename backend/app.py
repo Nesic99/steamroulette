@@ -99,9 +99,9 @@ def persist_filter_failure(reason: str, steam_id: str):
             )
         conn.commit()
     except Exception:
+        conn.rollback()
     finally:
         release_db(conn)
-
 
 def check_metrics_token():
     if not METRICS_TOKEN:
