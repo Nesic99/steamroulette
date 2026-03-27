@@ -4,11 +4,15 @@ image:
   pullPolicy: Always
   pullSecret: ghcr-secret
 
+steamApiKey: ""
+metricsToken: ""
+
 backend:
   image:
     tag: latest
   replicaCount: 1
   port: 5000
+  createSecret: false
   resources:
     requests:
       cpu: 100m
@@ -17,9 +21,55 @@ backend:
       cpu: 500m
       memory: 256Mi
   secretName: steam-roulette-secret
+  migrations:
+    enabled: true
+    maxRetries: 30
+    retryDelaySeconds: 2
+    hook:
+      enabled: true
   service:
     type: NodePort
     nodePort: 30503
+
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  port: 5432
+  database: steamroulette
+  username: steamroulette
+  password: ""
+  secretName: steam-roulette-postgres-secret
+  createSecret: false
+  storage:
+    size: 2Gi
+    storageClassName: ""
+  pdb:
+    enabled: true
+    minAvailable: 1
+  backup:
+    enabled: false
+    schedule: "0 */6 * * *"
+    retentionDays: 7
+    storage:
+      size: 10Gi
+      storageClassName: ""
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 frontend:
   image:
@@ -39,5 +89,10 @@ frontend:
 
 ingress:
   enabled: false
+  className: ""
+  host: localhost
+  tls:
+    enabled: false
+    secretName: steam-roulette-tls
 
 namespace: steam-roulette

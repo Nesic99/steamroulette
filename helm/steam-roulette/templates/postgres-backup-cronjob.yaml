@@ -1,0 +1,62 @@
+{{- if and .Values.postgres.enabled .Values.postgres.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "steam-roulette.name" . }}-postgres-backup
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "steam-roulette.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-backup
+spec:
+  schedule: {{ .Values.postgres.backup.schedule | quote }}
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: {{ include "steam-roulette.name" . }}-postgres-backup
+            app.kubernetes.io/component: postgres-backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: pg-backup
+              image: {{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}
+              imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+              command:
+                - sh
+                - -c
+                - |
+                  set -euo pipefail
+                  export PGPASSWORD="$POSTGRES_PASSWORD"
+                  ts="$(date +%Y%m%d%H%M%S)"
+                  out="/backups/steamroulette-${ts}.sql.gz"
+                  pg_dump -h {{ include "steam-roulette.name" . }}-postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" | gzip > "$out"
+                  find /backups -type f -name "*.sql.gz" -mtime +{{ .Values.postgres.backup.retentionDays }} -delete
+              env:
+                - name: POSTGRES_DB
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.postgres.secretName }}
+                      key: POSTGRES_DB
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.postgres.secretName }}
+                      key: POSTGRES_USER
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.postgres.secretName }}
+                      key: POSTGRES_PASSWORD
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+              resources:
+                {{- toYaml .Values.postgres.backup.resources | nindent 16 }}
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: {{ include "steam-roulette.name" . }}-postgres-backup-pvc
+{{- end }}

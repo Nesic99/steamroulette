@@ -39,7 +39,7 @@ MOCK_PLAYER = {
 def test_health(client):
     res = client.get("/api/health")
     assert res.status_code == 200
-    assert res.get_json() == {"status": "ok"}
+    assert res.get_json() == {"status": "ok", "db": "unavailable"}
 
 
 # ── resolve_steam_id ──────────────────────────────────────────────────────────

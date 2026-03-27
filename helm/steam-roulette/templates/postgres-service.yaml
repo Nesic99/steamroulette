@@ -1,0 +1,18 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "steam-roulette.name" . }}-postgres
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "steam-roulette.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  selector:
+    app: {{ include "steam-roulette.name" . }}-postgres
+  ports:
+    - name: postgres
+      port: {{ .Values.postgres.port }}
+      targetPort: {{ .Values.postgres.port }}
+  type: ClusterIP
+{{- end }}

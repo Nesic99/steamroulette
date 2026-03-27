@@ -1,12 +1,35 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: steam-roulette-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
     container_name: steam-roulette-backend
     restart: unless-stopped
     environment:
       - STEAM_API_KEY=${STEAM_API_KEY}
+      - METRICS_TOKEN=${METRICS_TOKEN}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     ports:
       - "5000:5000"   # exposed for direct API access / debugging
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')"]
       interval: 10s
@@ -23,3 +46,18 @@ services:
       backend:
         condition: service_healthy
 
+  db-init:
+    build: ./backend
+    container_name: steam-roulette-db-init
+    restart: "no"
+    command: ["python", "db_init.py"]
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - DB_INIT_MAX_RETRIES=${DB_INIT_MAX_RETRIES:-30}
+      - DB_INIT_RETRY_DELAY_SECONDS=${DB_INIT_RETRY_DELAY_SECONDS:-2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

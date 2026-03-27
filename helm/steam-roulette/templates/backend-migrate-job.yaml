@@ -1,0 +1,44 @@
+{{- if .Values.backend.migrations.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "steam-roulette.name" . }}-db-migrate
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "steam-roulette.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+  {{- if .Values.backend.migrations.hook.enabled }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-weight": "-5"
+  {{- end }}
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: {{ include "steam-roulette.name" . }}-db-migrate
+        app.kubernetes.io/component: backend
+    spec:
+      restartPolicy: OnFailure
+      {{- if .Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.image.pullSecret }}
+      {{- end }}
+      containers:
+        - name: db-migrate
+          image: {{ include "steam-roulette.backendImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "db_init.py"]
+          env:
+            - name: DB_INIT_MAX_RETRIES
+              value: {{ .Values.backend.migrations.maxRetries | quote }}
+            - name: DB_INIT_RETRY_DELAY_SECONDS
+              value: {{ .Values.backend.migrations.retryDelaySeconds | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.secretName }}
+                  key: DATABASE_URL
+{{- end }}

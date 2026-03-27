@@ -1,0 +1,15 @@
+{{- if and .Values.postgres.enabled .Values.postgres.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "steam-roulette.name" . }}-postgres
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "steam-roulette.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  minAvailable: {{ .Values.postgres.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      app: {{ include "steam-roulette.name" . }}-postgres
+{{- end }}

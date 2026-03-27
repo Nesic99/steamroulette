@@ -38,6 +38,14 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.backend.secretName }}
                   key: METRICS_TOKEN
+                  optional: true
+            {{- if .Values.postgres.enabled }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.secretName }}
+                  key: DATABASE_URL
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /api/health
