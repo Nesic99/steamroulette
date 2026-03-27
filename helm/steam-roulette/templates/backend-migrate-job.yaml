@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/component: backend
   {{- if .Values.backend.migrations.hook.enabled }}
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook": post-install,pre-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
     "helm.sh/hook-weight": "-5"
   {{- end }}
@@ -42,3 +42,4 @@ spec:
                   name: {{ .Values.postgres.secretName }}
                   key: DATABASE_URL
 {{- end }}
+

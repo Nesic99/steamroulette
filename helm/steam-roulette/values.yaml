@@ -13,6 +13,8 @@ backend:
   replicaCount: 1
   port: 5000
   createSecret: false
+  metrics:
+    enabled: false
   resources:
     requests:
       cpu: 100m
