@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS filter_failures (
 
 CREATE INDEX IF NOT EXISTS idx_spins_created_at ON spins (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_spins_steam_id ON spins (steam_id);
+CREATE INDEX IF NOT EXISTS idx_spins_appid ON spins (appid);
+CREATE INDEX IF NOT EXISTS idx_spins_player_name ON spins (player_name);
 CREATE INDEX IF NOT EXISTS idx_filter_failures_created_at ON filter_failures (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_filter_failures_reason ON filter_failures (reason);
 
@@ -41,6 +43,7 @@ DECLARE
     filter_failures_total BIGINT := 0;
     playtime_failures BIGINT := 0;
     content_failures BIGINT := 0;
+    rec RECORD;
 BEGIN
     SELECT COUNT(*) INTO total_spins FROM spins;
     SELECT COUNT(*) INTO spins_last_1h FROM spins WHERE created_at >= NOW() - INTERVAL '1 hour';
@@ -70,6 +73,42 @@ BEGIN
     output := output || '# TYPE steamroulette_filter_failures_by_reason_total counter' || E'\n';
     output := output || 'steamroulette_filter_failures_by_reason_total{reason="playtime"} ' || playtime_failures || E'\n';
     output := output || 'steamroulette_filter_failures_by_reason_total{reason="content"} ' || content_failures || E'\n';
+
+    output := output || '# HELP steamroulette_top_game_spins Top 10 most spun games by recorded spins' || E'\n';
+    output := output || '# TYPE steamroulette_top_game_spins gauge' || E'\n';
+    FOR rec IN
+        SELECT
+            appid,
+            game_name,
+            COUNT(*) AS spins
+        FROM spins
+        GROUP BY appid, game_name
+        ORDER BY spins DESC, game_name ASC, appid ASC
+        LIMIT 10
+    LOOP
+        output := output
+            || 'steamroulette_top_game_spins{appid="' || rec.appid
+            || '",game_name="' || replace(replace(replace(rec.game_name, E'\\', E'\\\\'), E'"', E'\\"'), E'\n', E'\\n')
+            || '"} ' || rec.spins || E'\n';
+    END LOOP;
+
+    output := output || '# HELP steamroulette_top_player_spins Top 10 players by recorded roulette spins' || E'\n';
+    output := output || '# TYPE steamroulette_top_player_spins gauge' || E'\n';
+    FOR rec IN
+        SELECT
+            steam_id,
+            player_name,
+            COUNT(*) AS spins
+        FROM spins
+        GROUP BY steam_id, player_name
+        ORDER BY spins DESC, player_name ASC, steam_id ASC
+        LIMIT 10
+    LOOP
+        output := output
+            || 'steamroulette_top_player_spins{steam_id="' || replace(replace(replace(rec.steam_id, E'\\', E'\\\\'), E'"', E'\\"'), E'\n', E'\\n')
+            || '",player_name="' || replace(replace(replace(rec.player_name, E'\\', E'\\\\'), E'"', E'\\"'), E'\n', E'\\n')
+            || '"} ' || rec.spins || E'\n';
+    END LOOP;
 
     RETURN output;
 END;
